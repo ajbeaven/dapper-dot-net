@@ -1540,21 +1540,6 @@ this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbT
             }
         }
 
-		private static Type GetDerivedType(Type abstractType, IDataReader reader)
-		{
-			if (!abstractType.IsAbstract)
-				return abstractType;
-
-			var discriminatorProp = abstractType.GetProperty("Discriminator");
-			if (discriminatorProp == null)
-				throw new InvalidOperationException("Cannot create instance of abstract class " + abstractType.FullName + ". To allow dapper to map to a derived type, add a Discriminator field that stores the name of the derived type");
-
-			var assembly = Assembly.GetAssembly(abstractType);
-			string typePrefix = abstractType.Namespace + ".";
-			var discriminator = reader["discriminator"].ToString();
-			return assembly.GetType(typePrefix + discriminator);
-		}
-
 		private static IEnumerable<T> QueryImpl<T>(this IDbConnection cnn, CommandDefinition command, Type effectiveType)
 		{
 			object param = command.Parameters;
@@ -1622,6 +1607,21 @@ this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbT
 				if (wasClosed) cnn.Close();
 				if (cmd != null) cmd.Dispose();
 			}
+		}
+
+		private static Type GetDerivedType(Type abstractType, IDataReader reader)
+		{
+			if (!abstractType.IsAbstract)
+				return abstractType;
+
+			var discriminatorProp = abstractType.GetProperty("Discriminator");
+			if (discriminatorProp == null)
+				throw new InvalidOperationException("Cannot create instance of abstract class " + abstractType.FullName + ". To allow dapper to map to a derived type, add a Discriminator field that stores the name of the derived type");
+
+			var assembly = Assembly.GetAssembly(abstractType);
+			string typePrefix = abstractType.Namespace + ".";
+			var discriminator = reader["discriminator"].ToString();
+			return assembly.GetType(typePrefix + discriminator);
 		}
 
         /// <summary>
