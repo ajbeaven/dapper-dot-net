@@ -323,7 +323,7 @@ namespace DapperTests_NET45
             int before = Dapper.SqlMapper.GetCachedSQLCount();
             using (var sqlConnection = Program.GetOpenConnection(true))
             {
-                using (var multi = sqlConnection.QueryMultiple(cmdDef))
+                using (var multi = sqlConnection.QueryMultiple(cmdDef, false))
                 {
                     c = multi.Read<int>().Single();
                     d = multi.Read<int>().Single();

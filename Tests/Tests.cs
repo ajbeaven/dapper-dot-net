@@ -937,7 +937,7 @@ left join #Users u on u.Id = p.OwnerId
 Order by p.Id
 ";
 
-            var grid = connection.QueryMultiple(sql);
+			var grid = connection.QueryMultiple(sql, false);
 
             for (int i = 0; i < 2; i++)
             {
@@ -958,7 +958,7 @@ Order by p.Id
 
         public void TestQueryMultipleBuffered()
         {
-            using (var grid = connection.QueryMultiple("select 1; select 2; select @x; select 4", new { x = 3 }))
+            using (var grid = connection.QueryMultiple("select 1; select 2; select @x; select 4", false, new { x = 3 }))
             {
                 var a = grid.Read<int>();
                 var b = grid.Read<int>();
@@ -974,7 +974,7 @@ Order by p.Id
 
         public void TestQueryMultipleNonBufferedIncorrectOrder()
         {
-            using (var grid = connection.QueryMultiple("select 1; select 2; select @x; select 4", new { x = 3 }))
+			using (var grid = connection.QueryMultiple("select 1; select 2; select @x; select 4", false, new { x = 3 }))
             {
                 var a = grid.Read<int>(false);
                 try
@@ -991,7 +991,7 @@ Order by p.Id
         }
         public void TestQueryMultipleNonBufferedCcorrectOrder()
         {
-            using (var grid = connection.QueryMultiple("select 1; select 2; select @x; select 4", new { x = 3 }))
+			using (var grid = connection.QueryMultiple("select 1; select 2; select @x; select 4", false, new { x = 3 }))
             {
                 var a = grid.Read<int>(false).Single();
                 var b = grid.Read<int>(false).Single();
@@ -1142,7 +1142,7 @@ Order by p.Id";
             var sql = @"select 1 as Id union all select 2 as Id     select 'abc' as name   select 1 as Id union all select 2 as Id";
             int i, j;
             string s;
-            using (var multi = connection.QueryMultiple(sql))
+			using (var multi = connection.QueryMultiple(sql, false))
             {
                 i = multi.Read<int>().First();
                 s = multi.Read<string>().Single();
@@ -1434,7 +1434,7 @@ SET @NumberOfLegs = @NumberOfLegs - 1
 SET @AddressName = 'bobs burgers'
 select 42
 select 17
-SET @AddressPersonId = @PersonId", p))
+SET @AddressPersonId = @PersonId", false, p))
                 {
                     x = multi.Read<int>().Single();
                     y = multi.Read<int>().Single();
@@ -1978,7 +1978,7 @@ left join #Comments c on c.PostId = p.Id
 where p.Id = 1
 Order by p.Id";
 
-                var grid = connection.QueryMultiple(sql);
+				var grid = connection.QueryMultiple(sql, false);
 
                 var post1 = grid.Read<Post>().ToList();
 
@@ -2044,7 +2044,7 @@ Order by p.Id";
                 var sql = @"SELECT * FROM #Users ORDER BY Id
                         SELECT * FROM #Posts ORDER BY Id DESC";
 
-                var grid = connection.QueryMultiple(sql);
+				var grid = connection.QueryMultiple(sql, false);
 
                 var users = grid.Read().ToList();
                 var posts = grid.Read().ToList();
@@ -2646,7 +2646,7 @@ end");
             using (var conn = GetClosedConnection())
             {
                 conn.State.IsEqualTo(ConnectionState.Closed);
-                using (var multi = conn.QueryMultiple("select 1 select 2 select 3"))
+				using (var multi = conn.QueryMultiple("select 1 select 2 select 3", false))
                 {
                     multi.Read<int>().Single().IsEqualTo(1);
                     multi.Read<int>().Single().IsEqualTo(2);
@@ -2698,7 +2698,7 @@ end");
         {
             using (var conn = GetClosedConnection())
             {
-                using (var multi = conn.QueryMultiple("select 1; select 'abc';"))
+				using (var multi = conn.QueryMultiple("select 1; select 'abc';", false))
                 {
                     multi.Read<int>().Single().IsEqualTo(1);
                     multi.Read<string>().Single().IsEqualTo("abc");
@@ -2712,7 +2712,7 @@ end");
             {
                 try
                 {
-                    conn.QueryMultiple("select gibberish");
+					conn.QueryMultiple("select gibberish", false);
                     false.IsEqualTo(true); // shouldn't have got here
                 }
                 catch
@@ -2724,7 +2724,7 @@ end");
 
         public void TestMultiSelectWithSomeEmptyGrids()
         {
-            using (var reader = connection.QueryMultiple("select 1; select 2 where 1 = 0; select 3 where 1 = 0; select 4;"))
+			using (var reader = connection.QueryMultiple("select 1; select 2 where 1 = 0; select 3 where 1 = 0; select 4;", false))
             {
                 var one = reader.Read<int>().ToArray();
                 var two = reader.Read<int>().ToArray();
@@ -3372,7 +3372,7 @@ option (optimize for (@vals unKnoWn))";
             Type type = GetSomeType();
 
             dynamic first, second;
-            using (var multi = connection.QueryMultiple("select @A as [A], @B as [B]; select @C as [A], @D as [B]",
+			using (var multi = connection.QueryMultiple("select @A as [A], @B as [B]; select @C as [A], @D as [B]", false,
                 new { A = 123, B = "abc", C = 456, D = "def" }))
             {
                 first = multi.Read(type).Single();

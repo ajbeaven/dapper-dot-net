@@ -53,7 +53,7 @@ namespace DapperTests_NET35
 
         public void TestMultiple()
         {
-            using (var grid = connection.QueryMultiple("select 1; select 2; select 3", null, CommandType.Text))
+            using (var grid = connection.QueryMultiple("select 1; select 2; select 3", false, null, CommandType.Text))
             {
                 int i = grid.Read<int>().Single();
                 int j = grid.Read<int>().Single();

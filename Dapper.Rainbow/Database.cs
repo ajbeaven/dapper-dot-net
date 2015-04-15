@@ -320,9 +320,9 @@ namespace Dapper
             return SqlMapper.Query(connection, sql, param as object, transaction, buffered);
         }
 
-        public Dapper.SqlMapper.GridReader QueryMultiple(string sql, dynamic param = null, IDbTransaction transaction = null, int? commandTimeout = null, CommandType? commandType = null)
+        public Dapper.SqlMapper.GridReader QueryMultiple(string sql, bool handleAbstractTypes, dynamic param = null, IDbTransaction transaction = null, int? commandTimeout = null, CommandType? commandType = null)
         {
-            return SqlMapper.QueryMultiple(connection, sql, param, transaction, commandTimeout, commandType);
+            return SqlMapper.QueryMultiple(connection, sql, handleAbstractTypes, param, transaction, commandTimeout, commandType);
         }
 
 

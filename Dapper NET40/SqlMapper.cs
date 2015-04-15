@@ -503,14 +503,17 @@ namespace Dapper
             public int GetHitCount() { return Interlocked.CompareExchange(ref hitCount, 0, 0); }
             public void RecordHit() { Interlocked.Increment(ref hitCount); }
         }
-        static int GetColumnHash(IDataReader reader)
+        static int GetColumnHash(IDataReader reader, bool hasAbstractTypes)
         {
             unchecked
             {
                 int colCount = reader.FieldCount, hash = colCount;
                 for (int i = 0; i < colCount; i++)
                 {   // binding code is only interested in names - not types
-                    object tmp = reader.GetName(i);
+					string tmp = reader.GetName(i);
+					if (hasAbstractTypes && tmp == "Discriminator")
+		                hash = (hash * 31) + reader.GetValue(i).GetHashCode();
+
                     hash = (hash * 31) + (tmp == null ? 0 : tmp.GetHashCode());
                 }
                 return hash;
@@ -1146,25 +1149,25 @@ namespace Dapper
         /// <summary>
         /// Execute a command that returns multiple result sets, and access each in turn
         /// </summary>
-        public static GridReader QueryMultiple(this IDbConnection cnn, string sql, object param, IDbTransaction transaction)
+		public static GridReader QueryMultiple(this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbTransaction transaction)
         {
-            return QueryMultiple(cnn, sql, param, transaction, null, null);
+            return QueryMultiple(cnn, sql, handleAbstractTypes, param, transaction, null, null);
         }
 
         /// <summary>
         /// Execute a command that returns multiple result sets, and access each in turn
         /// </summary>
-        public static GridReader QueryMultiple(this IDbConnection cnn, string sql, object param, CommandType commandType)
+		public static GridReader QueryMultiple(this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, CommandType commandType)
         {
-            return QueryMultiple(cnn, sql, param, null, null, commandType);
+			return QueryMultiple(cnn, sql, handleAbstractTypes, param, null, null, commandType);
         }
 
         /// <summary>
         /// Execute a command that returns multiple result sets, and access each in turn
         /// </summary>
-        public static GridReader QueryMultiple(this IDbConnection cnn, string sql, object param, IDbTransaction transaction, CommandType commandType)
+        public static GridReader QueryMultiple(this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbTransaction transaction, CommandType commandType)
         {
-            return QueryMultiple(cnn, sql, param, transaction, null, commandType);
+			return QueryMultiple(cnn, sql, handleAbstractTypes, param, transaction, null, commandType);
         }
 #endif
 
@@ -1482,23 +1485,23 @@ this IDbConnection cnn, Type type, string sql, object param = null, IDbTransacti
         /// </summary>
         public static GridReader QueryMultiple(
 #if CSHARP30
-this IDbConnection cnn, string sql, object param, IDbTransaction transaction, int? commandTimeout, CommandType? commandType
+this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbTransaction transaction, int? commandTimeout, CommandType? commandType
 #else
-            this IDbConnection cnn, string sql, object param = null, IDbTransaction transaction = null, int? commandTimeout = null, CommandType? commandType = null
+	        this IDbConnection cnn, string sql, bool handleAbstractTypes, object param = null, IDbTransaction transaction = null, int? commandTimeout = null, CommandType? commandType = null
 #endif
 )
         {
             var command = new CommandDefinition(sql, (object)param, transaction, commandTimeout, commandType, CommandFlags.Buffered);
-            return QueryMultipleImpl(cnn, ref command);
+            return QueryMultipleImpl(cnn, handleAbstractTypes, ref command);
         }
         /// <summary>
         /// Execute a command that returns multiple result sets, and access each in turn
         /// </summary>
-        public static GridReader QueryMultiple(this IDbConnection cnn, CommandDefinition command)
+		public static GridReader QueryMultiple(this IDbConnection cnn, CommandDefinition command, bool handleAbstractTypes)
         {
-            return QueryMultipleImpl(cnn, ref command);
+            return QueryMultipleImpl(cnn, handleAbstractTypes, ref command);
         }
-        private static GridReader QueryMultipleImpl(this IDbConnection cnn, ref CommandDefinition command)
+		private static GridReader QueryMultipleImpl(this IDbConnection cnn, bool handleAbstractTypes, ref CommandDefinition command)
         {
             object param = command.Parameters;
             Identity identity = new Identity(command.CommandText, command.CommandType, cnn, typeof(GridReader), param == null ? null : param.GetType(), null);
@@ -1511,7 +1514,9 @@ this IDbConnection cnn, string sql, object param, IDbTransaction transaction, in
             {
                 if (wasClosed) cnn.Open();
                 cmd = command.SetupCommand(cnn, info.ParamReader);
-                reader = cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
+				reader = handleAbstractTypes
+					? cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection : CommandBehavior.Default)
+					: cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
 
                 var result = new GridReader(cmd, reader, identity, command.Parameters as DynamicParameters, command.AddToCache);
                 cmd = null; // now owned by result
@@ -1535,67 +1540,206 @@ this IDbConnection cnn, string sql, object param, IDbTransaction transaction, in
             }
         }
 
-        private static IEnumerable<T> QueryImpl<T>(this IDbConnection cnn, CommandDefinition command, Type effectiveType)
-        {
-            object param = command.Parameters;
-            var identity = new Identity(command.CommandText, command.CommandType, cnn, effectiveType, param == null ? null : param.GetType(), null);
-            var info = GetCacheInfo(identity, param, command.AddToCache);
+		private static Type GetDerivedType(Type abstractType, IDataReader reader)
+		{
+			if (!abstractType.IsAbstract)
+				return abstractType;
 
-            IDbCommand cmd = null;
-            IDataReader reader = null;
+			var discriminatorProp = abstractType.GetProperty("Discriminator");
+			if (discriminatorProp == null)
+				throw new InvalidOperationException("Cannot create instance of abstract class " + abstractType.FullName + ". To allow dapper to map to a derived type, add a Discriminator field that stores the name of the derived type");
 
-            bool wasClosed = cnn.State == ConnectionState.Closed;
-            try
-            {
-                cmd = command.SetupCommand(cnn, info.ParamReader);
+			var assembly = Assembly.GetAssembly(abstractType);
+			string typePrefix = abstractType.Namespace + ".";
+			var discriminator = reader["discriminator"].ToString();
+			return assembly.GetType(typePrefix + discriminator);
+		}
 
-                if (wasClosed) cnn.Open();
-                reader = cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
-                wasClosed = false; // *if* the connection was closed and we got this far, then we now have a reader
-                // with the CloseConnection flag, so the reader will deal with the connection; we
-                // still need something in the "finally" to ensure that broken SQL still results
-                // in the connection closing itself
-                var tuple = info.Deserializer;
-                int hash = GetColumnHash(reader);
-                if (tuple.Func == null || tuple.Hash != hash)
-                {
-                    if (reader.FieldCount == 0) //https://code.google.com/p/dapper-dot-net/issues/detail?id=57
-                        yield break;
-                    tuple = info.Deserializer = new DeserializerState(hash, GetDeserializer(effectiveType, reader, 0, -1, false));
-                    if(command.AddToCache) SetQueryCache(identity, info);
-                }
+		private static IEnumerable<T> QueryImpl<T>(this IDbConnection cnn, CommandDefinition command, Type effectiveType)
+		{
+			object param = command.Parameters;
+			var identity = new Identity(command.CommandText, command.CommandType, cnn, effectiveType, param == null ? null : param.GetType(), null);
+			var info = GetCacheInfo(identity, param, command.AddToCache);
 
-                var func = tuple.Func;
-                var convertToType = Nullable.GetUnderlyingType(effectiveType) ?? effectiveType;
-                while (reader.Read())
-                {
-                    object val = func(reader);
-					if (val == null || val is T) {
-                        yield return (T)val;
-                    } else {
-                        yield return (T)Convert.ChangeType(val, convertToType, CultureInfo.InvariantCulture);
-                    }
-                }
-                while (reader.NextResult()) { }
-                // happy path; close the reader cleanly - no
-                // need for "Cancel" etc
-                reader.Dispose();
-                reader = null;
+			IDbCommand cmd = null;
+			IDataReader reader = null;
 
-                command.OnCompleted();
-            }
-            finally
-            {
-                if (reader != null)
-                {
-                    if (!reader.IsClosed) try { cmd.Cancel(); }
-                        catch { /* don't spoil the existing exception */ }
-                    reader.Dispose();
-                }
-                if (wasClosed) cnn.Close();
-                if (cmd != null) cmd.Dispose();
-            }
-        }
+			bool wasClosed = cnn.State == ConnectionState.Closed;
+			try
+			{
+				cmd = command.SetupCommand(cnn, info.ParamReader);
+
+				if (wasClosed) cnn.Open();
+				bool isAbstract = effectiveType.IsAbstract;
+				reader = isAbstract
+					? cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection : CommandBehavior.Default)
+					: cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
+				wasClosed = false; // *if* the connection was closed and we got this far, then we now have a reader
+				// with the CloseConnection flag, so the reader will deal with the connection; we
+				// still need something in the "finally" to ensure that broken SQL still results
+				// in the connection closing itself
+				while (reader.Read())
+				{
+					var tuple = info.Deserializer;
+					int hash = GetColumnHash(reader, isAbstract);
+					if (tuple.Func == null || tuple.Hash != hash)
+					{
+						if (reader.FieldCount == 0) //https://code.google.com/p/dapper-dot-net/issues/detail?id=57
+							yield break;
+						tuple = info.Deserializer = new DeserializerState(hash, GetDeserializer(effectiveType, reader, 0, -1, false));
+						if (command.AddToCache) SetQueryCache(identity, info);
+					}
+
+					var func = tuple.Func;
+					var convertToType = Nullable.GetUnderlyingType(effectiveType) ?? effectiveType;
+
+					object val = func(reader);
+					if (val == null || val is T)
+					{
+						yield return (T)val;
+					}
+					else
+					{
+						yield return (T)Convert.ChangeType(val, convertToType, CultureInfo.InvariantCulture);
+					}
+				}
+				while (reader.NextResult()) { }
+				// happy path; close the reader cleanly - no
+				// need for "Cancel" etc
+				reader.Dispose();
+				reader = null;
+
+				command.OnCompleted();
+			}
+			finally
+			{
+				if (reader != null)
+				{
+					if (!reader.IsClosed) try { cmd.Cancel(); }
+						catch { /* don't spoil the existing exception */ }
+					reader.Dispose();
+				}
+				if (wasClosed) cnn.Close();
+				if (cmd != null) cmd.Dispose();
+			}
+		}
+
+		//private static IEnumerable<T> QueryImpl<T>(this IDbConnection cnn, CommandDefinition command, Type effectiveType)
+		//{
+		//	object param = command.Parameters;
+		//	var identity = new Identity(command.CommandText, command.CommandType, cnn, effectiveType, param == null ? null : param.GetType(), null);
+		//	var info = GetCacheInfo(identity, param, command.AddToCache);
+
+		//	IDbCommand cmd = null;
+		//	IDataReader reader = null;
+
+		//	bool wasClosed = cnn.State == ConnectionState.Closed;
+		//	try
+		//	{
+		//		cmd = command.SetupCommand(cnn, info.ParamReader);
+
+		//		if (wasClosed) cnn.Open();
+		//		bool isAbstract = effectiveType.IsAbstract;
+		//		reader = isAbstract
+		//			? cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection : CommandBehavior.Default)
+		//			: cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
+		//		wasClosed = false; // *if* the connection was closed and we got this far, then we now have a reader
+		//		// with the CloseConnection  flag, so the reader will deal with the connection; we
+		//		// still need something in the "finally" to ensure that broken SQL still results
+		//		// in the connection closing itself
+
+		//		var rows = isAbstract
+		//			? QueryAbstractImpl<T>(command, identity, info, reader)
+		//			: QueryNonAbstractImpl<T>(command, effectiveType, identity, info, reader);
+
+		//		foreach (var row in rows)
+		//			yield return row;
+
+		//		while (reader.NextResult()) { }
+		//		// happy path; close the reader cleanly - no
+		//		// need for "Cancel" etc
+		//		reader.Dispose();
+		//		reader = null;
+
+		//		command.OnCompleted();
+		//	}
+		//	finally
+		//	{
+		//		if (reader != null)
+		//		{
+		//			if (!reader.IsClosed) try { cmd.Cancel(); }
+		//				catch { /* don't spoil the existing exception */ }
+		//			reader.Dispose();
+		//		}
+		//		if (wasClosed) cnn.Close();
+		//		if (cmd != null) cmd.Dispose();
+		//	}
+		//}
+
+		//private static IEnumerable<T> QueryAbstractImpl<T>(CommandDefinition command, Identity identity, CacheInfo info, IDataReader reader)
+		//{
+		//	// You'll need to make sure your typePrefix is correct to your type's namespace
+		//	var assembly = Assembly.GetExecutingAssembly();
+		//	var typePrefix = assembly.GetName().Name + ".";
+
+		//	while (reader.Read())
+		//	{
+		//		// This was already here
+		//		if (reader.FieldCount == 0) //https://code.google.com/p/dapper-dot-net/issues/detail?id=57
+		//			yield break;
+
+		//		// This has been moved from outside the while
+		//		int hash = GetColumnHash(reader);
+
+		//		// Now we're creating a new DeserializerState for every row we read 
+		//		// This can be made more efficient by caching and re-using for matching types
+		//		var discriminator = reader["discriminator"].ToString();
+		//		var convertToType = assembly.GetType(typePrefix + discriminator);
+
+		//		var tuple = info.Deserializer = new DeserializerState(hash, GetDeserializer(convertToType, reader, 0, -1, false));
+		//		if (command.AddToCache) SetQueryCache(identity, info);
+
+		//		// The rest is the same as before except using our type in ChangeType
+		//		var func = tuple.Func;
+
+		//		foreach (var row in GetRows<T>(func, reader, convertToType))
+		//			yield return row;
+		//	}
+		//}
+
+		//private static IEnumerable<T> QueryNonAbstractImpl<T>(CommandDefinition command, Type effectiveType, Identity identity, CacheInfo info, IDataReader reader)
+		//{
+		//	var tuple = info.Deserializer;
+		//	int hash = GetColumnHash(reader);
+		//	if (tuple.Func == null || tuple.Hash != hash)
+		//	{
+		//		if (reader.FieldCount == 0) //https://code.google.com/p/dapper-dot-net/issues/detail?id=57
+		//			yield break;
+		//		tuple = info.Deserializer = new DeserializerState(hash, GetDeserializer(effectiveType, reader, 0, -1, false));
+		//		if (command.AddToCache) SetQueryCache(identity, info);
+		//	}
+
+		//	var func = tuple.Func;
+		//	var convertToType = Nullable.GetUnderlyingType(effectiveType) ?? effectiveType;
+		//	while (reader.Read())
+		//	{
+		//		foreach (var row in GetRows<T>(func, reader, convertToType))
+		//			yield return row;
+		//	}
+		//}
+
+		//private static IEnumerable<T> GetRows<T>(Func<IDataReader, object> func, IDataReader reader, Type convertToType)
+		//{
+		//	object val = func(reader);
+		//	if (val == null || val is T)
+		//	{
+		//		yield return (T)val;
+		//	}
+		//	else
+		//	{
+		//		yield return (T)Convert.ChangeType(val, convertToType, CultureInfo.InvariantCulture);
+		//	}
+		//}
 
         /// <summary>
         /// Maps a query to objects
@@ -1805,38 +1949,43 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
             bool wasClosed = cnn != null && cnn.State == ConnectionState.Closed;
             try
             {
+				var types = new Type[] { typeof(TFirst), typeof(TSecond), typeof(TThird), typeof(TFourth), typeof(TFifth), typeof(TSixth), typeof(TSeventh) };
+	            bool isAnyTypeAbstract = types.Any(t => t.IsAbstract);
                 if (reader == null)
                 {
                     ownedCommand = command.SetupCommand(cnn, cinfo.ParamReader);
                     if (wasClosed) cnn.Open();
-                    ownedReader = ownedCommand.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
+					ownedReader = isAnyTypeAbstract
+						? ownedCommand.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection : CommandBehavior.Default)
+						: ownedCommand.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
                     reader = ownedReader;
                 }
-                DeserializerState deserializer = default(DeserializerState);
-                Func<IDataReader, object>[] otherDeserializers = null;
-
-                int hash = GetColumnHash(reader);
-                if ((deserializer = cinfo.Deserializer).Func == null || (otherDeserializers = cinfo.OtherDeserializers) == null || hash != deserializer.Hash)
+                
+                while (reader.Read())
                 {
-                    var deserializers = GenerateDeserializers(new Type[] { typeof(TFirst), typeof(TSecond), typeof(TThird), typeof(TFourth), typeof(TFifth), typeof(TSixth), typeof(TSeventh) }, splitOn, reader);
-                    deserializer = cinfo.Deserializer = new DeserializerState(hash, deserializers[0]);
-                    otherDeserializers = cinfo.OtherDeserializers = deserializers.Skip(1).ToArray();
-                    if(command.AddToCache) SetQueryCache(identity, cinfo);
+					DeserializerState deserializer = default(DeserializerState);
+					Func<IDataReader, object>[] otherDeserializers = null;
+
+					int hash = GetColumnHash(reader, isAnyTypeAbstract);
+					if ((deserializer = cinfo.Deserializer).Func == null || (otherDeserializers = cinfo.OtherDeserializers) == null || hash != deserializer.Hash)
+					{
+						var deserializers = GenerateDeserializers(types, splitOn, reader);
+						deserializer = cinfo.Deserializer = new DeserializerState(hash, deserializers[0]);
+						otherDeserializers = cinfo.OtherDeserializers = deserializers.Skip(1).ToArray();
+						if (command.AddToCache) SetQueryCache(identity, cinfo);
+					}
+
+					Func<IDataReader, TReturn> mapIt = GenerateMapper<TFirst, TSecond, TThird, TFourth, TFifth, TSixth, TSeventh, TReturn>(deserializer.Func, otherDeserializers, map);
+
+	                if (mapIt != null)
+	                {
+						yield return mapIt(reader);
+	                }
                 }
-
-                Func<IDataReader, TReturn> mapIt = GenerateMapper<TFirst, TSecond, TThird, TFourth, TFifth, TSixth, TSeventh, TReturn>(deserializer.Func, otherDeserializers, map);
-
-                if (mapIt != null)
+                if(finalize)
                 {
-                    while (reader.Read())
-                    {
-                        yield return mapIt(reader);
-                    }
-                    if(finalize)
-                    {
-                        while (reader.NextResult()) { }
-                        command.OnCompleted();
-                    }                    
+                    while (reader.NextResult()) { }
+                    command.OnCompleted();
                 }
             }
             finally
@@ -1876,6 +2025,7 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
             bool wasClosed = cnn != null && cnn.State == ConnectionState.Closed;
             try
             {
+				bool isAnyTypeAbstract = types.Any(t => t.IsAbstract);
                 if (reader == null)
                 {
                     ownedCommand = command.SetupCommand(cnn, cinfo.ParamReader);
@@ -1886,7 +2036,7 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
                 DeserializerState deserializer = default(DeserializerState);
                 Func<IDataReader, object>[] otherDeserializers = null;
 
-                int hash = GetColumnHash(reader);
+				int hash = GetColumnHash(reader, isAnyTypeAbstract);
                 if ((deserializer = cinfo.Deserializer).Func == null || (otherDeserializers = cinfo.OtherDeserializers) == null || hash != deserializer.Hash)
                 {
                     var deserializers = GenerateDeserializers(types, splitOn, reader);
@@ -3536,6 +3686,7 @@ Type type, IDataReader reader, int startBound = 0, int length = -1, bool returnN
 #endif
 )
         {
+	        type = GetDerivedType(type, reader);
 
             var dm = new DynamicMethod(string.Format("Deserialize{0}", Guid.NewGuid()), typeof(object), new[] { typeof(IDataReader) }, true);
             var il = dm.GetILGenerator();
@@ -4164,7 +4315,7 @@ Type type, IDataReader reader, int startBound = 0, int length = -1, bool returnN
                 CacheInfo cache = GetCacheInfo(typedIdentity, null, addToCache);
                 var deserializer = cache.Deserializer;
 
-                int hash = GetColumnHash(reader);
+                int hash = GetColumnHash(reader, type.IsAbstract);
                 if (deserializer.Func == null || deserializer.Hash != hash)
                 {
                     deserializer = new DeserializerState(hash, GetDeserializer(type, reader, 0, -1, false));
