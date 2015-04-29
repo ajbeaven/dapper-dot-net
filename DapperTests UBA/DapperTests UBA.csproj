@@ -52,6 +52,7 @@
     </Otherwise>
   </Choose>
   <ItemGroup>
+    <Compile Include="Owner.cs" />
     <Compile Include="Animal.cs" />
     <Compile Include="QueryAbstractTypes.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
