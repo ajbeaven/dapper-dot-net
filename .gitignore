@@ -9,3 +9,6 @@ NuGet.exe
 *.nupkg
 .docstats
 *.ide/
+*.ncrunchproject
+*.ncrunchsolution
+*.crunchsolution.cache

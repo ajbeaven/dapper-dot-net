@@ -25,13 +25,18 @@ namespace DapperTests_UBA
 				Connection.Open();
 
 				Connection.Execute(@"
+					CREATE TABLE Owner (
+						OwnerId INT NOT NULL PRIMARY KEY,
+						Name VARCHAR(100) NOT NULL
+					);
+
 					CREATE TABLE Animal (
 						AnimalId INT NOT NULL PRIMARY KEY,
 						Discriminator VARCHAR(100) NOT NULL,
 						FeatherColour VARCHAR(100),
 						FurColour VARCHAR(100),
-						FriendId INT REFERENCES Animal(AnimalId)
-					)");
+						OwnerId INT REFERENCES Owner(OwnerId)
+					);");
 			}
 			catch (Exception)
 			{
@@ -63,41 +68,45 @@ namespace DapperTests_UBA
 		[TestMethod]
 		public void QueryMultiMapTest()
 		{
-			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FeatherColour) VALUES (1, 'Bird', 'Red')");
-			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FurColour, FriendId) VALUES (2, 'Dog', 'Black', 1)");
+			Connection.Execute("INSERT INTO Owner(OwnerId, Name) VALUES (1, 'Andrew')");
 
-			var animals = Connection.Query<Animal, Animal, Animal>(@"
-				SELECT Animal.*, '_' as split, Friend.* 
+			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FeatherColour) VALUES (1, 'Bird', 'Red')");
+			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FurColour, OwnerId) VALUES (2, 'Dog', 'Black', 1)");
+
+			var animals = Connection.Query<Animal, Owner, Animal>(@"
+				SELECT Animal.*, '_' as split, Owner.* 
 				FROM Animal
-				LEFT JOIN Animal AS Friend ON Animal.FriendId = Friend.AnimalId", MapAnimal, splitOn: "split").ToList();
+				LEFT JOIN Owner ON Animal.OwnerId = Owner.OwnerId", MapAnimal, splitOn: "split").ToList();
 
 			Assert.AreEqual(2, animals.Count);
 
 			var dog = animals.Single(a => a.AnimalId == 2);
-			Assert.IsNotNull(dog.Friend);
-			Assert.AreEqual(1, dog.Friend.AnimalId);
+			Assert.IsNotNull(dog.Owner);
+			Assert.AreEqual(1, dog.Owner.OwnerId);
 		}
 
-		private Animal MapAnimal(Animal animal, Animal friend)
+		private Animal MapAnimal(Animal animal, Owner owner)
 		{
-			animal.Friend = friend;
+			animal.Owner = owner;
 			return animal;
 		}
 
 		[TestMethod]
 		public void QueryMultipleTest()
 		{
+			Connection.Execute("INSERT INTO Owner(OwnerId, Name) VALUES (1, 'Andrew')");
+
 			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FeatherColour) VALUES (1, 'Bird', 'Red')");
-			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FurColour, FriendId) VALUES (2, 'Dog', 'Black', 1)");
+			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FurColour, OwnerId) VALUES (2, 'Dog', 'Black', 1)");
 
 			const string multiSql = @"
-				SELECT Animal.*, '_' as split, Friend.* FROM Animal LEFT JOIN Animal AS Friend ON Animal.FriendId = Friend.AnimalId;
-				SELECT Animal.*, '_' as split, Friend.* FROM Animal LEFT JOIN Animal AS Friend ON Animal.FriendId = Friend.AnimalId";
+				SELECT Animal.*, '_' as split, Owner.* FROM Animal LEFT JOIN Owner ON Animal.OwnerId = Owner.OwnerId;
+				SELECT Animal.*, '_' as split, Owner.* FROM Animal LEFT JOIN Owner ON Animal.OwnerId = Owner.OwnerId";
 
 			using (var multi = Connection.QueryMultiple(multiSql, true))
 			{
-				var animals = multi.Read<Animal, Animal, Animal>(MapAnimal, splitOn: "split").ToList();
-				var animals2 = multi.Read<Animal, Animal, Animal>(MapAnimal, splitOn: "split").ToList();
+				var animals = multi.Read<Animal, Owner, Animal>(MapAnimal, splitOn: "split").ToList();
+				var animals2 = multi.Read<Animal, Owner, Animal>(MapAnimal, splitOn: "split").ToList();
 
 				Assert.AreEqual(2, animals.Count);
 				Assert.AreEqual(2, animals2.Count);

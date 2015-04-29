@@ -1621,6 +1621,8 @@ this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbT
 			{
 				if (type.IsAbstract)
 					throw new InvalidOperationException("Cannot create instance of abstract class " + type.FullName + ". To allow dapper to map to a derived type, add a Discriminator field that stores the name of the derived type");
+
+				return type;
 			}
 
 			var assembly = Assembly.GetAssembly(type);

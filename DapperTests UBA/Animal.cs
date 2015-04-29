@@ -8,13 +8,13 @@ namespace DapperTests_UBA
 		[Key]
 		public int AnimalId { get; set; }
 
-		public int FriendId { get; set; }
+		public int? OwnerId { get; set; }
 
 		[Write(false)]
 		public string Discriminator { get { return GetType().Name; } }
 
 		[Write(false)]
-		public Animal Friend { get; set; }
+		public Owner Owner { get; set; }
 	}
 
 	public class Bird : Animal
