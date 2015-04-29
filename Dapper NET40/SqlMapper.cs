@@ -503,7 +503,7 @@ namespace Dapper
             public int GetHitCount() { return Interlocked.CompareExchange(ref hitCount, 0, 0); }
             public void RecordHit() { Interlocked.Increment(ref hitCount); }
         }
-        static int GetColumnHash(IDataReader reader, bool hasAbstractTypes)
+        static int GetColumnHash(IDataReader reader, bool canTypeBeDerived)
         {
             unchecked
             {
@@ -511,7 +511,7 @@ namespace Dapper
                 for (int i = 0; i < colCount; i++)
                 {   // binding code is only interested in names - not types
 					string tmp = reader.GetName(i);
-					if (hasAbstractTypes && tmp == "Discriminator")
+					if (canTypeBeDerived && tmp == "Discriminator")
 		                hash = (hash * 31) + reader.GetValue(i).GetHashCode();
 
                     hash = (hash * 31) + (tmp == null ? 0 : tmp.GetHashCode());
@@ -1555,8 +1555,8 @@ this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbT
 				cmd = command.SetupCommand(cnn, info.ParamReader);
 
 				if (wasClosed) cnn.Open();
-				bool isAbstract = effectiveType.IsAbstract;
-				reader = isAbstract
+				bool canBeDerived = CanTypeBeDerived(effectiveType);
+				reader = canBeDerived
 					? cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection : CommandBehavior.Default)
 					: cmd.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
 				wasClosed = false; // *if* the connection was closed and we got this far, then we now have a reader
@@ -1566,7 +1566,7 @@ this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbT
 				while (reader.Read())
 				{
 					var tuple = info.Deserializer;
-					int hash = GetColumnHash(reader, isAbstract);
+					int hash = GetColumnHash(reader, canBeDerived);
 					if (tuple.Func == null || tuple.Hash != hash)
 					{
 						if (reader.FieldCount == 0) //https://code.google.com/p/dapper-dot-net/issues/detail?id=57
@@ -1609,17 +1609,22 @@ this IDbConnection cnn, string sql, bool handleAbstractTypes, object param, IDbT
 			}
 		}
 
-		private static Type GetDerivedType(Type abstractType, IDataReader reader)
+		private static bool CanTypeBeDerived(Type type)
 		{
-			if (!abstractType.IsAbstract)
-				return abstractType;
+			return type.GetProperty("Discriminator") != null;
+		}
 
-			var discriminatorProp = abstractType.GetProperty("Discriminator");
+		private static Type GetDerivedType(Type type, IDataReader reader)
+		{
+			var discriminatorProp = type.GetProperty("Discriminator");
 			if (discriminatorProp == null)
-				throw new InvalidOperationException("Cannot create instance of abstract class " + abstractType.FullName + ". To allow dapper to map to a derived type, add a Discriminator field that stores the name of the derived type");
+			{
+				if (type.IsAbstract)
+					throw new InvalidOperationException("Cannot create instance of abstract class " + type.FullName + ". To allow dapper to map to a derived type, add a Discriminator field that stores the name of the derived type");
+			}
 
-			var assembly = Assembly.GetAssembly(abstractType);
-			string typePrefix = abstractType.Namespace + ".";
+			var assembly = Assembly.GetAssembly(type);
+			string typePrefix = type.Namespace + ".";
 			var discriminator = reader["discriminator"].ToString();
 			return assembly.GetType(typePrefix + discriminator);
 		}
@@ -1833,12 +1838,12 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
             try
             {
 				var types = new Type[] { typeof(TFirst), typeof(TSecond), typeof(TThird), typeof(TFourth), typeof(TFifth), typeof(TSixth), typeof(TSeventh) };
-	            bool isAnyTypeAbstract = types.Any(t => t.IsAbstract);
+				bool canTypesBeDerived = types.Any(CanTypeBeDerived);
                 if (reader == null)
                 {
                     ownedCommand = command.SetupCommand(cnn, cinfo.ParamReader);
                     if (wasClosed) cnn.Open();
-					ownedReader = isAnyTypeAbstract
+					ownedReader = canTypesBeDerived
 						? ownedCommand.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection : CommandBehavior.Default)
 						: ownedCommand.ExecuteReader(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess);
                     reader = ownedReader;
@@ -1849,7 +1854,7 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
 					DeserializerState deserializer = default(DeserializerState);
 					Func<IDataReader, object>[] otherDeserializers = null;
 
-					int hash = GetColumnHash(reader, isAnyTypeAbstract);
+					int hash = GetColumnHash(reader, canTypesBeDerived);
 					if ((deserializer = cinfo.Deserializer).Func == null || (otherDeserializers = cinfo.OtherDeserializers) == null || hash != deserializer.Hash)
 					{
 						var deserializers = GenerateDeserializers(types, splitOn, reader);
@@ -1908,7 +1913,7 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
             bool wasClosed = cnn != null && cnn.State == ConnectionState.Closed;
             try
             {
-				bool isAnyTypeAbstract = types.Any(t => t.IsAbstract);
+				bool canTypesBeDerived = types.Any(CanTypeBeDerived);
                 if (reader == null)
                 {
                     ownedCommand = command.SetupCommand(cnn, cinfo.ParamReader);
@@ -1919,7 +1924,7 @@ this IDbConnection cnn, string sql, Func<TFirst, TSecond, TThird, TFourth, TRetu
                 DeserializerState deserializer = default(DeserializerState);
                 Func<IDataReader, object>[] otherDeserializers = null;
 
-				int hash = GetColumnHash(reader, isAnyTypeAbstract);
+				int hash = GetColumnHash(reader, canTypesBeDerived);
                 if ((deserializer = cinfo.Deserializer).Func == null || (otherDeserializers = cinfo.OtherDeserializers) == null || hash != deserializer.Hash)
                 {
                     var deserializers = GenerateDeserializers(types, splitOn, reader);
@@ -4198,7 +4203,7 @@ Type type, IDataReader reader, int startBound = 0, int length = -1, bool returnN
                 CacheInfo cache = GetCacheInfo(typedIdentity, null, addToCache);
                 var deserializer = cache.Deserializer;
 
-                int hash = GetColumnHash(reader, type.IsAbstract);
+				int hash = GetColumnHash(reader, CanTypeBeDerived(type));
                 if (deserializer.Func == null || deserializer.Hash != hash)
                 {
                     deserializer = new DeserializerState(hash, GetDeserializer(type, reader, 0, -1, false));
