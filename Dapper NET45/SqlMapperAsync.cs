@@ -81,7 +81,7 @@ namespace Dapper
                     reader = await cmd.ExecuteReaderAsync(wasClosed ? CommandBehavior.CloseConnection | CommandBehavior.SequentialAccess : CommandBehavior.SequentialAccess, cancel).ConfigureAwait(false);
                     
                     var tuple = info.Deserializer;
-					int hash = GetColumnHash(reader, CanTypeBeDerived(effectiveType));
+                    int hash = GetColumnHash(reader, effectiveType.IsAbstract);
                     if (tuple.Func == null || tuple.Hash != hash)
                     {
                         tuple = info.Deserializer = new DeserializerState(hash, GetDeserializer(effectiveType, reader, 0, -1, false));
@@ -597,7 +597,7 @@ this IDbConnection cnn, string sql, object param, IDbTransaction transaction, in
                 CacheInfo cache = GetCacheInfo(typedIdentity, null, addToCache);
                 var deserializer = cache.Deserializer;
 
-				int hash = GetColumnHash(reader, CanTypeBeDerived(type));
+                int hash = GetColumnHash(reader, type.IsAbstract);
                 if (deserializer.Func == null || deserializer.Hash != hash)
                 {
                     deserializer = new DeserializerState(hash, GetDeserializer(type, reader, 0, -1, false));

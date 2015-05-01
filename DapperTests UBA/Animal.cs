@@ -10,11 +10,16 @@ namespace DapperTests_UBA
 
 		public int? OwnerId { get; set; }
 
+		public int? FriendId { get; set; }
+
 		[Write(false)]
 		public string Discriminator { get { return GetType().Name; } }
 
 		[Write(false)]
 		public Owner Owner { get; set; }
+
+		[Write(false)]
+		public Animal Friend { get; set; }
 	}
 
 	public class Bird : Animal
