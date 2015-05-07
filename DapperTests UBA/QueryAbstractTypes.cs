@@ -148,10 +148,8 @@ namespace DapperTests_UBA
 		[TestMethod]
 		public void QueryMultipleTwiceTest()
 		{
-			Connection.Execute("INSERT INTO Owner(OwnerId, Name) VALUES (1, 'Andrew')");
-
-			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FeatherColour) VALUES (1, 'Bird', 'Red')");
-			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FurColour, OwnerId, FriendId) VALUES (2, 'Dog', 'Black', 1, 1)");
+			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FeatherColour) VALUES (1, 'Bird', 'Blue')");
+			Connection.Execute("INSERT INTO Animal(AnimalId, Discriminator, FeatherColour) VALUES (2, 'Bird', 'Brown')");
 
 			var sb = new SqlBuilder();
 			sb.Where("AnimalId = @animalId", new {animalId = 1});
@@ -162,14 +160,14 @@ namespace DapperTests_UBA
 
 			using (var multi = Connection.QueryMultiple(temp.RawSql, true, temp.Parameters))
 			{
-				var animals = multi.Read<Animal>().ToList();
-				var animals2 = multi.Read<Animal>().ToList();
+				var animals = multi.Read<Bird>().ToList();
+				var animals2 = multi.Read<Bird>().ToList();
 			}
 
 			using (var multi = Connection.QueryMultiple(temp.RawSql, true, temp.Parameters))
 			{
-				var animals = multi.Read<Animal>().ToList();
-				var animals2 = multi.Read<Animal>().ToList();
+				var animals = multi.Read<Bird>().ToList();
+				var animals2 = multi.Read<Bird>().ToList();
 			}
 		}
 	}
