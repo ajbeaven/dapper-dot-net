@@ -66,6 +66,10 @@
       <Project>{302EC82F-A81B-48C5-B653-B5C75D2BD103}</Project>
       <Name>Dapper.Contrib NET45</Name>
     </ProjectReference>
+    <ProjectReference Include="..\Dapper.SqlBuilder NET45\Dapper.SqlBuilder NET45.csproj">
+      <Project>{B83D86B2-79C0-46AA-B51B-03730256FAAC}</Project>
+      <Name>Dapper.SqlBuilder NET45</Name>
+    </ProjectReference>
   </ItemGroup>
   <Choose>
     <When Condition="'$(VisualStudioVersion)' == '10.0' And '$(IsCodedUITest)' == 'True'">
