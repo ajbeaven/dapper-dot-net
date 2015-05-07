@@ -4371,7 +4371,7 @@ Type type, IDataReader reader, int startBound = 0, int length = -1, bool returnN
 							if (reader.FieldCount == 0) //https://code.google.com/p/dapper-dot-net/issues/detail?id=57
 								yield break;
 							tuple = info.Deserializer = new DeserializerState(hash, GetDeserializer(type, reader, 0, -1, false));
-							if (addToCache) SetQueryCache(identity, info);
+							if (addToCache) SetQueryCache(typedIdentity, info);
                 		}
 
 						yield return (T)tuple.Func(reader);
