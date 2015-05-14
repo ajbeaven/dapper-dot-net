@@ -376,7 +376,7 @@ namespace Dapper.Contrib.Extensions
 				if (!proxy.IsDirty) return false;
 			}
 
-			var type = typeof(T);
+			var type = entityToUpdate.GetType();
 
 #if DEBUG
 			if (type.IsAbstract)
